@@ -2,6 +2,7 @@ inherit:
     - base.yaml
 
 training:
+    data: ill-conditioned
     task: linear_regression
     curriculum:
         points:
