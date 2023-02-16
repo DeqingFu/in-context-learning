@@ -1,6 +1,7 @@
 import math
 
 import torch
+import pdb 
 
 
 def squared_error(ys_pred, ys):
@@ -60,6 +61,7 @@ def get_task_sampler(
         "quadratic_regression": QuadraticRegression,
         "relu_2nn_regression": Relu2nnRegression,
         "decision_tree": DecisionTree,
+        "division": Division
     }
     if task_name in task_names_to_classes:
         task_cls = task_names_to_classes[task_name]
@@ -72,6 +74,31 @@ def get_task_sampler(
         print("Unknown task")
         raise NotImplementedError
 
+
+class Division(Task):
+    def __init__(self, n_dims, batch_size, pool_dict=None, seeds=None, scale=1):
+        super(Division, self).__init__(n_dims, batch_size, pool_dict, seeds)
+        self.scale = scale
+
+        self.w_b = torch.randn(self.b_size, 1, 1)
+
+    def evaluate(self, xs_b):
+        w_b = self.w_b.to(xs_b.device)
+        ys_b = self.scale * (torch.divide(xs_b, w_b))[:,:,0]
+        ys_b[ys_b < 1e-8] = 1e-8
+        return ys_b
+
+    @staticmethod
+    def generate_pool_dict(n_dims, num_tasks, **kwargs):  # ignore extra args
+        return {"w": torch.randn(num_tasks, n_dims, 1)}
+
+    @staticmethod
+    def get_metric():
+        return squared_error
+
+    @staticmethod
+    def get_training_metric():
+        return mean_squared_error
 
 class LinearRegression(Task):
     def __init__(self, n_dims, batch_size, pool_dict=None, seeds=None, scale=1):

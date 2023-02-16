@@ -9,7 +9,8 @@ from sklearn import tree
 import xgboost as xgb
 
 from base_models import NeuralNetwork, ParallelNetworks
-
+import pdb 
+import numpy as np
 
 def build_model(conf):
     if conf.family == "gpt2":
@@ -203,6 +204,195 @@ class LeastSquaresModel:
         return torch.stack(preds, dim=1)
 
 
+# xs and ys should be on cpu for this method. Otherwise the output maybe off in case when train_xs is not full rank due to the implementation of torch.linalg.lstsq.
+class LeastSquaresModelTaylorExpansion:
+    def __init__(self, n_taylor_terms=3):
+        self.n_taylor_terms = n_taylor_terms
+        self.name = f"OLS_taylor_terms={n_taylor_terms}"
+
+    def taylor_inv(self, X):
+        A =  torch.eye(X.shape[0]) - X
+        m = torch.linalg.norm(A) * 2
+        A = A/m
+        inv = torch.eye(X.shape[0])
+        for i in range(1, self.n_taylor_terms):
+            #print(torch.linalg.norm(torch.matrix_power(A, i)), m**i)
+            inv += torch.matrix_power(A, i)
+        
+        # inv *= alpha
+        return inv 
+
+    def __call__(self, xs, ys, inds=None):
+        xs, ys = xs.cpu(), ys.cpu()
+        if inds is None:
+            inds = range(ys.shape[1])
+        else:
+            if max(inds) >= ys.shape[1] or min(inds) < 0:
+                raise ValueError("inds contain indices where xs and ys are not defined")
+
+        preds = []
+
+        for i in inds:
+            if i == 0:
+                preds.append(torch.zeros_like(ys[:, 0]))  # predict zero for first point
+                continue
+            train_xs, train_ys = xs[:, :i], ys[:, :i]
+            test_x = xs[:, i : i + 1]
+
+            ws = torch.zeros(test_x.shape[0], test_x.shape[2], 1)
+            for b in range(test_x.shape[0]):
+                train_x = train_xs[b]
+                train_y = train_ys[b]
+                
+                X = train_x.T @ train_x
+                y = train_x.T @ train_y
+                #w = torch.linalg.pinv(X, atol=0.1) @ y[:,None] 
+                #w = torch.linalg.pinv(train_x, atol=0.8) @ train_y[:, None]
+                w = self.taylor_inv(X) @ y[:,None] 
+                ws[b] = w
+
+            pred = test_x @ ws
+            preds.append(pred[:, 0, 0])
+
+        return torch.stack(preds, dim=1)
+
+# xs and ys should be on cpu for this method. Otherwise the output maybe off in case when train_xs is not full rank due to the implementation of torch.linalg.lstsq.
+class LeastSquaresModelGradientDescent:
+    def __init__(self, n_steps=3, step_size=0.01):
+        self.n_steps = n_steps
+        self.step_size = step_size
+        self.name = f"OLS_GD_steps={n_steps}"
+
+    def gradient_descent(self, X, y):
+        w = torch.rand(X.shape[1], 1)
+        
+        for _ in range(self.n_steps):
+            grad = (X.T @ X) @ w - (X.T@y)[:, None]
+            w = w - self.step_size * grad 
+        
+        return w
+
+    def __call__(self, xs, ys, inds=None):
+        xs, ys = xs.cpu(), ys.cpu()
+        if inds is None:
+            inds = range(ys.shape[1])
+        else:
+            if max(inds) >= ys.shape[1] or min(inds) < 0:
+                raise ValueError("inds contain indices where xs and ys are not defined")
+
+        preds = []
+
+        for i in inds:
+            if i == 0:
+                preds.append(torch.zeros_like(ys[:, 0]))  # predict zero for first point
+                continue
+            train_xs, train_ys = xs[:, :i], ys[:, :i]
+            test_x = xs[:, i : i + 1]
+
+            ws = torch.zeros(test_x.shape[0], test_x.shape[2], 1)
+            for b in range(test_x.shape[0]):
+                train_x = train_xs[b]
+                train_y = train_ys[b]
+                
+                w = self.gradient_descent(train_x, train_y)
+                ws[b] = w
+
+            pred = test_x @ ws
+            preds.append(pred[:, 0, 0])
+
+        return torch.stack(preds, dim=1)
+
+# xs and ys should be on cpu for this method. Otherwise the output maybe off in case when train_xs is not full rank due to the implementation of torch.linalg.lstsq.
+class LeastSquaresModelNewtonMethod:
+    def __init__(self, n_newton_steps=3):
+        self.n_newton_steps = n_newton_steps
+        self.name = f"OLS_newton_inv={n_newton_steps}"
+
+    def newton_inv(self, X):
+        lam = torch.linalg.norm(X @ X.T)
+        alpha = np.random.uniform(low=0, high=2/lam)
+        inv = alpha * X.T 
+        eye = torch.eye(X.shape[0])
+        for _ in range(self.n_newton_steps):
+            inv = inv @ (2*eye-X@inv)
+        
+        #print(lam, alpha, torch.any(torch.isnan(inv)).item())
+        return inv
+
+    def __call__(self, xs, ys, inds=None):
+        xs, ys = xs.cpu(), ys.cpu()
+        if inds is None:
+            inds = range(ys.shape[1])
+        else:
+            if max(inds) >= ys.shape[1] or min(inds) < 0:
+                raise ValueError("inds contain indices where xs and ys are not defined")
+
+        preds = []
+
+        for i in inds:
+            if i == 0:
+                preds.append(torch.zeros_like(ys[:, 0]))  # predict zero for first point
+                continue
+            train_xs, train_ys = xs[:, :i], ys[:, :i]
+            test_x = xs[:, i : i + 1]
+
+            ws = torch.zeros(test_x.shape[0], test_x.shape[2], 1)
+            for b in range(test_x.shape[0]):
+                train_x = train_xs[b]
+                train_y = train_ys[b]
+                
+                X = train_x.T @ train_x
+                y = train_x.T @ train_y
+                w = self.newton_inv(X) @ y[:,None] 
+                ws[b] = w
+
+            pred = test_x @ ws
+            preds.append(pred[:, 0, 0])
+
+        return torch.stack(preds, dim=1)
+
+# xs and ys should be on cpu for this method. Otherwise the output maybe off in case when train_xs is not full rank due to the implementation of torch.linalg.lstsq.
+class LeastSquaresModelNewtonMethodDirect:
+    def __init__(self):
+        self.name = f"OLS_newton_direct"
+
+    def newton_inv(self, X, y):
+        w0 = torch.rand(X.shape[1], 1)
+        #pdb.set_trace()
+        L_grad = (X.T @ X) @ w0 - (X.T@y)[:, None]
+        w = w0 - torch.linalg.pinv(X.T @ X) @ L_grad
+        
+        return w
+
+    def __call__(self, xs, ys, inds=None):
+        xs, ys = xs.cpu(), ys.cpu()
+        if inds is None:
+            inds = range(ys.shape[1])
+        else:
+            if max(inds) >= ys.shape[1] or min(inds) < 0:
+                raise ValueError("inds contain indices where xs and ys are not defined")
+
+        preds = []
+
+        for i in inds:
+            if i == 0:
+                preds.append(torch.zeros_like(ys[:, 0]))  # predict zero for first point
+                continue
+            train_xs, train_ys = xs[:, :i], ys[:, :i]
+            test_x = xs[:, i : i + 1]
+
+            ws = torch.zeros(test_x.shape[0], test_x.shape[2], 1)
+            for b in range(test_x.shape[0]):
+                train_x = train_xs[b]
+                train_y = train_ys[b]
+                w = self.newton_inv(train_x, train_y)
+                ws[b] = w
+
+            pred = test_x @ ws
+            preds.append(pred[:, 0, 0])
+
+        return torch.stack(preds, dim=1)
+    
 class AveragingModel:
     def __init__(self):
         self.name = "averaging"

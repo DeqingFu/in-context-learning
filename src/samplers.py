@@ -66,7 +66,7 @@ class IllConditionedSampler(DataSampler):
         self.bias = bias
         self.scale = scale
     
-    def sample_xs(self, n_points, b_size, n_dims_truncated=None, seeds=None, kappa=100):
+    def sample_xs(self, n_points, b_size, n_dims_truncated=None, seeds=None, kappa=32):
         if seeds is None:
             xs_b = torch.randn(b_size, n_points, self.n_dims)
         else:
@@ -85,11 +85,13 @@ class IllConditionedSampler(DataSampler):
         for j in range(b_size):
             w = xs_b[j]
             U, S, V = svd(w, full_matrices=False)
-            max_sv = S.max()
-            desired_min_sv = max_sv / kappa 
+            min_sv = S.min()
+            desired_max_sv = min_sv * kappa 
             #print(S[S!=0].min(), desired_min_sv)
-            if S[S!=0].min() > desired_min_sv:
-                S[np.argmin(np.ma.masked_where(S==0, S))] = desired_min_sv
+            if S[S!=0].max() < desired_max_sv:
+                S[np.argmax(np.ma.masked_where(S==0, S))] = desired_max_sv
+            else:
+                S[S > desired_max_sv] = desired_max_sv
             #else:
             #    S[S <= desired_min_sv] = desired_min_sv
             #print("condition number:", S[S!=0].max()/S[S!=0].min())
