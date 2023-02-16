@@ -258,9 +258,10 @@ class LeastSquaresModelTaylorExpansion:
 
 # xs and ys should be on cpu for this method. Otherwise the output maybe off in case when train_xs is not full rank due to the implementation of torch.linalg.lstsq.
 class LeastSquaresModelGradientDescent:
-    def __init__(self, n_steps=3, step_size=0.01):
+    def __init__(self, n_steps=3, step_size=0.01, weight_decay=0.0):
         self.n_steps = n_steps
         self.step_size = step_size
+        self.weight_decay = weight_decay
         self.name = f"OLS_GD_steps={n_steps}"
 
     def gradient_descent(self, X, y):
@@ -268,7 +269,7 @@ class LeastSquaresModelGradientDescent:
         
         for _ in range(self.n_steps):
             grad = (X.T @ X) @ w - (X.T@y)[:, None]
-            w = w - self.step_size * grad 
+            w = (1-self.weight_decay) * w - self.step_size * grad 
         
         return w
 
