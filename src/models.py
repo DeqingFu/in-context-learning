@@ -3,7 +3,7 @@ import torch.nn as nn
 from transformers import GPT2Model, GPT2Config
 from tqdm import tqdm
 from sklearn.svm import LinearSVC
-from sklearn.linear_model import LogisticRegression, Lasso
+from sklearn.linear_model import LogisticRegression, Lasso, Ridge
 import warnings
 from sklearn import tree
 import xgboost as xgb
@@ -14,12 +14,17 @@ import numpy as np
 
 def build_model(conf):
     if conf.family == "gpt2":
-        model = TransformerModel(
+        if conf.use_cls:
+            ModelClass = TransformerModelWithCLS
+        else:
+            ModelClass = TransformerModel
+        model = ModelClass(
             n_dims=conf.n_dims,
             n_positions=conf.n_positions,
             n_embd=conf.n_embd,
             n_layer=conf.n_layer,
             n_head=conf.n_head,
+            activation_function=conf.activation_function
         )
     else:
         raise NotImplementedError
@@ -79,7 +84,7 @@ def get_relevant_baselines(task_name):
 
 
 class TransformerModel(nn.Module):
-    def __init__(self, n_dims, n_positions, n_embd=128, n_layer=12, n_head=4):
+    def __init__(self, n_dims, n_positions, n_embd=128, n_layer=12, n_head=4, output_attentions=False, activation_function="gelu"):
         super(TransformerModel, self).__init__()
         configuration = GPT2Config(
             n_positions=2 * n_positions,
@@ -90,6 +95,7 @@ class TransformerModel(nn.Module):
             embd_pdrop=0.0,
             attn_pdrop=0.0,
             use_cache=False,
+            activation_function=activation_function,
         )
         self.name = f"gpt2_embd={n_embd}_layer={n_layer}_head={n_head}"
 
@@ -98,6 +104,7 @@ class TransformerModel(nn.Module):
         self._read_in = nn.Linear(n_dims, n_embd)
         self._backbone = GPT2Model(configuration)
         self._read_out = nn.Linear(n_embd, 1)
+        self.output_attentions = output_attentions
 
     @staticmethod
     def _combine(xs_b, ys_b):
@@ -123,10 +130,70 @@ class TransformerModel(nn.Module):
                 raise ValueError("inds contain indices where xs and ys are not defined")
         zs = self._combine(xs, ys)
         embeds = self._read_in(zs)
-        output = self._backbone(inputs_embeds=embeds).last_hidden_state
-        prediction = self._read_out(output)
-        return prediction[:, ::2, 0][:, inds]  # predict only on xs
+        output = self._backbone(inputs_embeds=embeds, output_attentions=self.output_attentions)
+        prediction = self._read_out(output.last_hidden_state)
+        if self.training or not self.output_attentions:
+            return prediction[:, ::2, 0][:, inds]           # predict only on xs
+        else:
+            return prediction[:, ::2, 0][:, inds], output  
 
+class TransformerModelWithCLS(nn.Module):
+    def __init__(self, n_dims, n_positions, n_embd=128, n_layer=12, n_head=4, \
+                 output_attentions=False, activation_function="gelu"):
+        super(TransformerModelWithCLS, self).__init__()
+        configuration = GPT2Config(
+            n_positions=2 * n_positions+1,
+            n_embd=n_embd,
+            n_layer=n_layer,
+            n_head=n_head,
+            resid_pdrop=0.0,
+            embd_pdrop=0.0,
+            attn_pdrop=0.0,
+            use_cache=False,
+            activation_function=activation_function,
+        )
+        self.name = f"gpt2_embd={n_embd}_layer={n_layer}_head={n_head}"
+
+        self.n_positions = n_positions
+        self.n_dims = n_dims
+        self._read_in = nn.Linear(n_dims, n_embd)
+        self._backbone = GPT2Model(configuration)
+        self._read_out = nn.Linear(n_embd, 1)
+        self.output_attentions = output_attentions
+
+    @staticmethod
+    def _combine(xs_b, ys_b):
+        """Interleaves the x's and the y's into a single sequence."""
+        bsize, points, dim = xs_b.shape
+        ys_b_wide = torch.cat(
+            (
+                ys_b.view(bsize, points, 1),
+                torch.zeros(bsize, points, dim - 1, device=ys_b.device),
+            ),
+            axis=2,
+        )
+        cls_b = -torch.ones(bsize, 1, dim, device=ys_b.device) # Pad CLS tokens to the beginning
+        zs = torch.stack((xs_b, ys_b_wide), dim=2)
+        zs = zs.view(bsize, 2 * points, dim)
+        zs = torch.cat((cls_b, zs), dim=1)
+        return zs
+
+    def forward(self, xs, ys, inds=None):
+        if inds is None:
+            inds = torch.arange(ys.shape[1])
+        else:
+            inds = torch.tensor(inds)
+            if max(inds) >= ys.shape[1] or min(inds) < 0:
+                raise ValueError("inds contain indices where xs and ys are not defined")
+        zs = self._combine(xs, ys)
+        
+        embeds = self._read_in(zs)
+        output = self._backbone(inputs_embeds=embeds, output_attentions=self.output_attentions)
+        prediction = self._read_out(output.last_hidden_state)[:,1:,:] # ignore first CLS token
+        if self.training or not self.output_attentions:
+            return prediction[:, ::2, 0][:, inds]           # predict only on xs
+        else:
+            return prediction[:, ::2, 0][:, inds], output  
 
 class NNModel:
     def __init__(self, n_neighbors, weights="uniform"):
@@ -480,6 +547,63 @@ class LassoModel:
         return torch.stack(preds, dim=1)
 
 
+# Ridge regression (for regularized linear regression).
+# Seems to take more time as we decrease alpha.
+class RidgeModel:
+    def __init__(self, alpha, max_iter=100000):
+        # the l2 regularizer gets multiplied by alpha.
+        self.alpha = alpha
+        self.max_iter = max_iter
+        self.name = f"ridge_alpha={alpha}_max_iter={max_iter}"
+
+    # inds is a list containing indices where we want the prediction.
+    # prediction made at all indices by default.
+    def __call__(self, xs, ys, inds=None):
+        xs, ys = xs.cpu(), ys.cpu()
+
+        if inds is None:
+            inds = range(ys.shape[1])
+        else:
+            if max(inds) >= ys.shape[1] or min(inds) < 0:
+                raise ValueError("inds contain indices where xs and ys are not defined")
+
+        preds = []  # predict one for first point
+
+        # i: loop over num_points
+        # j: loop over bsize
+        for i in inds:
+            pred = torch.zeros_like(ys[:, 0])
+
+            if i > 0:
+                pred = torch.zeros_like(ys[:, 0])
+                for j in range(ys.shape[0]):
+                    train_xs, train_ys = xs[j, :i], ys[j, :i]
+
+                    # If all points till now have the same label, predict that label.
+
+                    clf = Ridge(
+                        alpha=self.alpha, fit_intercept=False, max_iter=self.max_iter
+                    )
+
+                    # Check for convergence.
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings("error")
+                        try:
+                            clf.fit(train_xs, train_ys)
+                        except Warning:
+                            print(f"lasso convergence warning at i={i}, j={j}.")
+                            raise
+
+                    w_pred = torch.from_numpy(clf.coef_).unsqueeze(1)
+
+                    test_x = xs[j, i : i + 1]
+                    y_pred = (test_x @ w_pred.float()).squeeze(1)
+                    pred[j] = y_pred[0]
+
+            preds.append(pred)
+
+        return torch.stack(preds, dim=1)
+    
 # Gradient Descent and variants.
 # Example usage: gd_model = GDModel(NeuralNetwork, {'in_size': 50, 'hidden_size':400, 'out_size' :1}, opt_alg = 'adam', batch_size = 100, lr = 5e-3, num_steps = 200)
 class GDModel:

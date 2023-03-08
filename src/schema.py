@@ -20,6 +20,8 @@ model_schema = {
     "n_embd": merge(tinteger, required),
     "n_layer": merge(tinteger, required),
     "n_head": merge(tinteger, required),
+    "activation_function": merge(tstring, default("gelu")), # allow "relu" and "linear"
+    "use_cls": merge(tboolean, default(False))
 }
 
 curriculum_base_schema = {
