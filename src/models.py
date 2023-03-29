@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from transformers import GPT2Model, GPT2Config
+from modified_gpt2 import GPT2Model as GPT2ModelNoSoftmax
 from tqdm import tqdm
 from sklearn.svm import LinearSVC
 from sklearn.linear_model import LogisticRegression, Lasso, Ridge
@@ -24,7 +25,8 @@ def build_model(conf):
             n_embd=conf.n_embd,
             n_layer=conf.n_layer,
             n_head=conf.n_head,
-            activation_function=conf.activation_function
+            activation_function=conf.activation_function,
+            use_softmax=conf.use_softmax if 'use_softmax' in conf else True
         )
     else:
         raise NotImplementedError
@@ -84,7 +86,7 @@ def get_relevant_baselines(task_name):
 
 
 class TransformerModel(nn.Module):
-    def __init__(self, n_dims, n_positions, n_embd=128, n_layer=12, n_head=4, output_attentions=False, activation_function="gelu"):
+    def __init__(self, n_dims, n_positions, n_embd=128, n_layer=12, n_head=4, output_attentions=False, activation_function="gelu", use_softmax=True):
         super(TransformerModel, self).__init__()
         configuration = GPT2Config(
             n_positions=2 * n_positions,
@@ -102,7 +104,10 @@ class TransformerModel(nn.Module):
         self.n_positions = n_positions
         self.n_dims = n_dims
         self._read_in = nn.Linear(n_dims, n_embd)
-        self._backbone = GPT2Model(configuration)
+        if use_softmax:
+            self._backbone = GPT2Model(configuration)
+        else:
+            self._backbone = GPT2ModelNoSoftmax(configuration)
         self._read_out = nn.Linear(n_embd, 1)
         self.output_attentions = output_attentions
 
@@ -139,7 +144,7 @@ class TransformerModel(nn.Module):
 
 class TransformerModelWithCLS(nn.Module):
     def __init__(self, n_dims, n_positions, n_embd=128, n_layer=12, n_head=4, \
-                 output_attentions=False, activation_function="gelu"):
+                 output_attentions=False, activation_function="gelu", use_softmax=True):
         super(TransformerModelWithCLS, self).__init__()
         configuration = GPT2Config(
             n_positions=2 * n_positions+1,
@@ -157,7 +162,10 @@ class TransformerModelWithCLS(nn.Module):
         self.n_positions = n_positions
         self.n_dims = n_dims
         self._read_in = nn.Linear(n_dims, n_embd)
-        self._backbone = GPT2Model(configuration)
+        if use_softmax:
+            self._backbone = GPT2Model(configuration)
+        else:
+            self._backbone = GPT2ModelNoSoftmax(configuration)
         self._read_out = nn.Linear(n_embd, 1)
         self.output_attentions = output_attentions
 

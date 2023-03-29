@@ -36,7 +36,10 @@ def sample_seeds(total_seeds, count):
 
 
 def train(model, args):
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.training.learning_rate)
+    if args.training.optim == "Adam":
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.training.learning_rate)
+    elif args.training.optim == "SGD":
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.training.learning_rate)
     curriculum = Curriculum(args.training.curriculum)
 
     starting_step = 0

@@ -21,7 +21,8 @@ model_schema = {
     "n_layer": merge(tinteger, required),
     "n_head": merge(tinteger, required),
     "activation_function": merge(tstring, default("gelu")), # allow "relu" and "linear"
-    "use_cls": merge(tboolean, default(False))
+    "use_cls": merge(tboolean, default(False)), 
+    "use_softmax": merge(tboolean, default(True))
 }
 
 curriculum_base_schema = {
@@ -58,6 +59,7 @@ training_schema = {
     "keep_every_steps": merge(tinteger, default(-1)),  # permanent checkpoints
     "resume_id": merge(tstring, nullable, default(None)),  # run uuid64
     "curriculum": stdict(curriculum_schema),
+    "optim": merge(tstring, default("Adam"))
 }
 
 wandb_schema = {
