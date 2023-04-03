@@ -117,8 +117,12 @@ class LinearRegression(Task):
                 self.w_b[i] = torch.randn(self.n_dims, 1, generator=generator)
         else:
             assert "w" in pool_dict
-            indices = torch.randperm(len(pool_dict["w"]))[:batch_size]
-            self.w_b = pool_dict["w"][indices]
+            if len(pool_dict["w"]) < batch_size:
+                n_repeat = batch_size // len(pool_dict["w"]) * 10
+                pool_dict["w"] = pool_dict["w"] * n_repeat
+                assert len(pool_dict["w"]) > batch_size
+            indices = torch.LongTensor(torch.randperm(len(pool_dict["w"]))[:batch_size])
+            self.w_b = torch.Tensor(pool_dict["w"])[indices].reshape(self.b_size, self.n_dims, 1)
 
     def evaluate(self, xs_b):
         w_b = self.w_b.to(xs_b.device)

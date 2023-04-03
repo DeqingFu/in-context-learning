@@ -47,6 +47,7 @@ from transformers.utils import (
 from transformers.utils.model_parallel_utils import assert_device_map, get_device_map
 from transformers.models.gpt2.configuration_gpt2 import GPT2Config
 
+import pdb 
 
 logger = logging.get_logger(__name__)
 
@@ -206,11 +207,16 @@ class GPT2Attention(nn.Module):
 
         # Replace softmax with division normalization
         #attn_weights = nn.functional.softmax(attn_weights, dim=-1) 
-        attn_weights = attn_weights / torch.sum(attn_weights, dim=-1, keepdim=True) 
+        #attn_weights = attn_weights / torch.sum(attn_weights, dim=-1, keepdim=True) 
 
         # Downcast (if necessary) back to V's dtype (if in mixed-precision) -- No-Op otherwise
         attn_weights = attn_weights.type(value.dtype)
         attn_weights = self.attn_dropout(attn_weights)
+
+        # use uniform attention
+        attn_weights = torch.ones_like(attn_weights) 
+        attn_weights = torch.where(causal_mask, attn_weights.to(attn_weights.dtype), 0.0)
+        attn_weights = attn_weights / attn_weights.sum(axis=-1, keepdims=True)
 
         # Mask heads if we want to
         if head_mask is not None:

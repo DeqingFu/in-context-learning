@@ -15,7 +15,8 @@ class DataSampler:
 def get_data_sampler(data_name, n_dims, **kwargs):
     names_to_classes = {
         "gaussian": GaussianSampler,
-        "ill-conditioned": IllConditionedSampler
+        "ill-conditioned": IllConditionedSampler,
+        "fixed": FixedSetSampler
     }
     print(data_name)
     if data_name in names_to_classes:
@@ -96,4 +97,22 @@ class IllConditionedSampler(DataSampler):
             #    S[S <= desired_min_sv] = desired_min_sv
             #print("condition number:", S[S!=0].max()/S[S!=0].min())
             xs_b[j] = torch.from_numpy(np.matmul(np.matmul(U, np.diag(S)), V)).float()
+        return xs_b
+
+class FixedSetSampler(DataSampler):
+    def __init__(self, n_dims, bias=None, scale=None):
+        super().__init__(n_dims)
+        self.bias = bias
+        self.scale = scale
+        self.set_x = np.linspace(start=-3, stop=3, num=10)
+
+    def sample_xs(self, n_points, b_size, n_dims_truncated=None, seeds=None):
+        assert self.n_dims == 1
+        xs_b = torch.FloatTensor(np.random.choice(self.set_x, size=(b_size, n_points, self.n_dims)))
+        if self.scale is not None:
+            xs_b = xs_b @ self.scale
+        if self.bias is not None:
+            xs_b += self.bias
+        if n_dims_truncated is not None:
+            xs_b[:, :, n_dims_truncated:] = 0
         return xs_b

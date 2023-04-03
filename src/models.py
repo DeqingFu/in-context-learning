@@ -15,7 +15,8 @@ import numpy as np
 
 def build_model(conf):
     if conf.family == "gpt2":
-        if conf.use_cls:
+        use_cls = conf.use_cls if "use_cls" in conf else False
+        if use_cls:
             ModelClass = TransformerModelWithCLS
         else:
             ModelClass = TransformerModel
@@ -25,7 +26,7 @@ def build_model(conf):
             n_embd=conf.n_embd,
             n_layer=conf.n_layer,
             n_head=conf.n_head,
-            activation_function=conf.activation_function,
+            activation_function=conf.activation_function if "activation_function" in conf else 'gelu',
             use_softmax=conf.use_softmax if 'use_softmax' in conf else True
         )
     else:
