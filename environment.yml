@@ -1,11 +1,17 @@
-name: in-context-learning
+name: transformers
 channels:
   - pytorch
   - defaults
+  - nvidia
 dependencies:
   - pip=21.2.4
   - python=3.8.12
-  - pytorch=1.11.0
+  - pytorch=2.0.0=py3.8_cuda11.8_cudnn8.7.0_0
+  - pytorch-cuda=11.8=h7e8668a_3
+  - pytorch-mutex=1.0=cuda
+  - torchaudio=2.0.0=py38_cu118
+  - torchtriton=2.0.0=py38
+  - torchvision=0.15.0=py38_cu118
   - pip:
     - jupyter==1.0.0
     - matplotlib==3.5.2
